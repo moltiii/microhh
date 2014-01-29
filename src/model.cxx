@@ -35,6 +35,7 @@
 #include "boundary.h"
 #include "boundary_surface.h"
 #include "boundary_user.h"
+#include "boundary_malte.h"
 
 // advection schemes
 #include "advec.h"
@@ -220,6 +221,8 @@ int cmodel::readinifile()
     boundary = new cboundary_surface(this);
   else if(swboundary == "user")
     boundary = new cboundary_user(this);
+  else if(swboundary == "malte")
+    boundary = new cboundary_malte(this);
   else if(swboundary == "default")
     boundary = new cboundary(this);
   else
