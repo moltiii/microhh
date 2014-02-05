@@ -9,7 +9,7 @@ crossname = "slngrad"
 
 timestart = 0
 timestep  = 1
-timeend   = 18
+timeend   = 5
 index     = 0
 
 precision = 0.1
