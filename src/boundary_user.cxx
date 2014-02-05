@@ -19,6 +19,9 @@
  * along with MicroHH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+
+#include <iostream>
+#include <fstream>
 #include <cstdio>
 #include <cmath>
 #include "input.h"
@@ -27,6 +30,8 @@
 #include "boundary_user.h"
 #include "defines.h"
 #include "model.h"
+
+using namespace std;
 
 #define NO_VELOCITY 0.
 #define NO_OFFSET 0.
@@ -89,9 +94,9 @@ int cboundary_user::setbc_patch(double * restrict a, double * restrict agrad, do
   avalr = facr*aval;
 
   // save the pattern
-  for(int j=grid->jstart; j<grid->jend; ++j)
+  for(int j=0; j<grid->jcells; ++j)
 #pragma ivdep
-    for(int i=grid->istart; i<grid->iend; ++i)
+    for(int i=0; i<grid->icells; ++i)
     {
       ij = i + j*jj;
       xmod = fmod(grid->x[i], patch_xh);
@@ -139,6 +144,26 @@ int cboundary_user::setbc_patch(double * restrict a, double * restrict agrad, do
         agrad[ij] = -aval/visc;
       }
   }
+
+    double sum = 0;
+    double mean_val;
+     for(int k=0;k<grid->icells*grid->jcells;k++)
+    {
+        sum += agrad[k];
+    }
+
+    mean_val = sum/(grid->icells*grid->jcells);
+    printf("\n new mean value: %f\n",mean_val);
+
+    ofstream ofile;
+    ofile.open("boundary_profile.txt",ios::app); 
+
+    for(int k=0;k<grid->icells;k++)
+    {
+        ofile << k << " " << agrad[k] << endl;
+    }
+
+    ofile.close();
 
   return 0;
 }

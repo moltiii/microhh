@@ -1,0 +1,18 @@
+ #!/bin/bash  
+
+ # new build
+ cd ../../build
+ make -j
+ cd ../cases/thermal
+
+ # clean init
+ rm *00.00*
+ rm *.nc
+ rm *000
+ rm boundary_profile.txt
+
+ # init mode
+ ./microhh init thermal
+
+ # run mode
+ ./microhh run thermal

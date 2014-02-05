@@ -39,9 +39,6 @@ class cboundary_malte : public cboundary
   	int setbc_patch(double *, double *, double *, int, double, double, double,
                     double *); ///< Set the values for the boundary fields.
 
-    // multiplicate array with a constant
-    int adjust_mean(double *);
-
     // patch type
     int    patch_dim;
     double cut;

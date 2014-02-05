@@ -1,0 +1,3 @@
+set style data line
+set title "bottom boundary" 
+plot 'boundary_profile.txt' using 1:2 title " " with filledcurve lt 20

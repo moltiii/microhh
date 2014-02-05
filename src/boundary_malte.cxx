@@ -1,4 +1,3 @@
-
 /*
  * MicroHH
  * Copyright (c) 2011-2013 Chiel van Heerwaarden
@@ -20,6 +19,9 @@
  * along with MicroHH.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+//#include <string>
+#include <iostream>
+#include <fstream>
 #include <cstdio>
 #include <cmath>
 #include "input.h"
@@ -28,6 +30,8 @@
 #include "boundary_malte.h"
 #include "defines.h"
 #include "model.h"
+
+using namespace std;
 
 #define NO_VELOCITY 0.
 #define NO_OFFSET 0.
@@ -78,10 +82,14 @@ int cboundary_malte::setvalues()
 int cboundary_malte::setbc_patch(double * restrict a, double * restrict agrad, double * restrict aflux, int sw, double aval, double visc, double offset,
                                 double * restrict tmp)
 {
-
-  double cosX, cosY;
-
   int ij,jj;
+  double cosX, cosY;
+  double sum = 0;
+  double mean_val;
+
+  // TODO calculate mean value of step function
+  double mean_step = 0.7984;
+
   jj = grid->icells;
 
   // save the pattern
@@ -91,22 +99,60 @@ int cboundary_malte::setbc_patch(double * restrict a, double * restrict agrad, d
     {
       ij = i + j*jj;
       
-      cosX = sin(2*PI*(grid->x[i]/wl))+1;
+      cosX = -cos(2*PI*(grid->x[i]/wl))+1;
 
       if(patch_dim == 2)
       {
-        cosY = sin(2*PI*(grid->y[j]/wl))+1;
+        cosY = -cos(2*PI*(grid->y[j]/wl))+1;
         tmp[ij] = cosX*cosY;
-        // adjust_mean(tmp);
+        sum += tmp[ij];
       }
       else
       {
         cosY = 1.;
         tmp[ij] = cosX*cosY;
+        sum += tmp[ij];
       }
     }
-    adjust_mean(tmp);
+    
+    // adjust mean to step_mean
+    mean_val = sum/(grid->icells*grid->jcells);
+    
+    for(int k=0;k<grid->icells*grid->jcells;k++)
+    {
+        tmp[k] = tmp[k] * (mean_step/mean_val);
+    }
 
+    double std;
+    for(int k=0;k<grid->icells*grid->jcells;k++)
+    {
+        std += pow((mean_step-tmp[k]),2);
+    }
+    std = std/(grid->icells*grid->jcells);
+    std = sqrt(std);
+    printf("\nsigma: %f\n",std);
+    // // new mean value
+    // sum = 0;
+    //  for(int k=0;k<grid->icells*grid->jcells;k++)
+    // {
+    //     sum += tmp[k];
+    // }
+
+    // mean_val = sum/(grid->icells*grid->jcells);
+    // printf("\n new mean value: %f\n",mean_val);
+
+    // // ouput file
+    // ofstream ofile;
+    // ofile.open("boundary_profile.txt",ios::app); 
+
+    // for(int k=0;k<grid->icells;k++)
+    // {
+    //     ofile << k << " " << tmp[k] << endl;
+    // }
+
+    // ofile.close();
+  
+    
   if(sw == BC_DIRICHLET)
   {
     for(int j=0; j<grid->jcells; ++j)
@@ -140,31 +186,29 @@ int cboundary_malte::setbc_patch(double * restrict a, double * restrict agrad, d
       }
   }
 
-  return 0;
-}
+    // new mean value
+    sum = 0;
+     for(int k=0;k<grid->icells*grid->jcells;k++)
+    {
+        sum += agrad[k];
+    }
 
-int cboundary_malte::adjust_mean(double * a)
+    mean_val = sum/(grid->icells*grid->jcells);
+    printf("\n new mean value: %f\n",mean_val);
 
-{ 
-  int size;
-  size = sizeof(a) / sizeof(a[0]);
+    ofstream ofile;
+    ofile.open("boundary_profile.txt",ios::app); 
 
-  double sum = 0.0;
-  double mean_f = 0.0; 
+    for(int k=0;k<grid->icells;k++)
+    {
+        ofile << k << " " << agrad[k] << endl;
+    }
 
-  for (int i = 0; i < size; ++i)
-  {
-     sum += a[i];
-  }
+    ofile.close();
 
-  mean_f = sum/size;
 
-  printf("mean value = %f\n", mean_f );
 
-  // for (int i = 0; i < size; ++i)
-  // {
-  //    a[i] = a[i] * (mean_val/mean_f);
-  // }
 
   return 0;
 }
+
