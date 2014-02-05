@@ -35,6 +35,7 @@
 #include "boundary.h"
 #include "boundary_surface.h"
 #include "boundary_user.h"
+#include "boundary_malte.h"
 
 // advection schemes
 #include "advec.h"
@@ -58,7 +59,6 @@
 #include "thermo.h"
 #include "thermo_dry.h"
 #include "thermo_moist.h"
-#include "thermo_dry_slope.h"
 
 // stats schemes
 #include "stats.h"
@@ -206,8 +206,6 @@ int cmodel::readinifile()
     thermo = new cthermo_moist(grid, fields, master);
   else if(swthermo == "dry")
     thermo = new cthermo_dry(grid, fields, master);
-  else if(swthermo == "dry_slope")
-    thermo = new cthermo_dry_slope(grid, fields, master);
   else if(swthermo == "0")
     thermo = new cthermo(grid, fields, master);
   else
@@ -223,6 +221,8 @@ int cmodel::readinifile()
     boundary = new cboundary_surface(this);
   else if(swboundary == "user")
     boundary = new cboundary_user(this);
+  else if(swboundary == "malte")
+    boundary = new cboundary_malte(this);
   else if(swboundary == "default")
     boundary = new cboundary(this);
   else
