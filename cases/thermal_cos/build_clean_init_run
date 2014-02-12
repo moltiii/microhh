@@ -10,6 +10,11 @@
  rm *.nc
  rm *000
  rm boundary_profile.txt
+ rm s.0*
+ rm time.0*
+ rm u.0*
+ rm v.0*
+ rm w.0*
 
  # init mode
  ./microhh init thermalcos

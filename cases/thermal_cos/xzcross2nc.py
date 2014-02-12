@@ -5,11 +5,11 @@ import netCDF4
 nx = 512
 ny = 1
 nz = 512
-crossname = "slngrad"
+crossname = "w"
 
 timestart = 0
 timestep  = 1
-timeend   = 5
+timeend   = 2000 
 index     = 0
 
 precision = 0.1

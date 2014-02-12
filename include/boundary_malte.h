@@ -39,10 +39,26 @@ class cboundary_malte : public cboundary
   	int setbc_patch(double *, double *, double *, int, double, double, double,
                     double *); ///< Set the values for the boundary fields.
 
-    // patch type
+    int calc_stats(double *, int, double *, double *);
+
+    int calc_step();
+
+    // from init file
     int    patch_dim;
     double cut;
     double wl;
+    double lambda;
+    double sigma;
+
+    // from init file -> stepF
+    double patch_xh;
+    double patch_xr;
+    double patch_xi;
+    double patch_facr;
+    double patch_facl;
+
+    double *noise;
+    double *step;
 
 
 };

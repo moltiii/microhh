@@ -219,6 +219,11 @@ int cboundary::exec()
       setgcbot_4th(it->second->data, grid->z, sbc[it->first]->bcbot, it->second->databot, it->second->datagradbot);
       setgctop_4th(it->second->data, grid->z, sbc[it->first]->bctop, it->second->datatop, it->second->datagradtop);
     }
+
+    // double sum = 0;
+    // for (int i=grid->igc;i<grid->icells-grid->igc+1;++i)
+    //   sum += fields->sp.begin()->second->datagradbot[i];
+    // printf("\nmean value after manipulating ghostcells: %f\n",sum/(512));
   }
 
   return 0;

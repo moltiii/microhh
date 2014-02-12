@@ -5,7 +5,7 @@ import netCDF4
 from pylab import *
 
 start = 0
-end   = 19
+end   = 39 
 step  = 2
 
 stats = netCDF4.Dataset("drycblles.0000000.nc","r")

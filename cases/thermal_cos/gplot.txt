@@ -1,3 +1,5 @@
 set style data line
 set title "bottom boundary" 
-plot 'boundary_profile.txt' using 1:2 title " " with filledcurve lt 20
+set style fill  transparent solid 0.50 noborder
+plot 	'boundary_profile.txt' using 1:2 title " " with filledcurve y1 = 0 lc rgb "forest-green", \
+		'boundary_profile.txt' using 1:3 title " " with filledcurve y1 = 0 lc rgb "gold"

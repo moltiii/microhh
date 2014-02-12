@@ -1,8 +1,8 @@
 import numpy
-#from pylab import *
+from pylab import *
 
 # set the height
-kmax = 512
+kmax = 512 
 dn   = 1./kmax
 
 n  = numpy.linspace(dn, 1.-dn, kmax)
@@ -55,9 +55,9 @@ for k in range(kmax):
 proffile.close()
 
 #plot the grid
-#subplot(131)
-#plot(n,z)
-#subplot(132)
-#plot(n,dz)
-#subplot(133)
-#plot(n,stretch)
+subplot(131)
+plot(n,z)
+subplot(132)
+plot(n,dz)
+subplot(133)
+plot(n,stretch)
