@@ -27,6 +27,8 @@
 // forward declaration to reduce compilation time
 class cmodel;
 
+
+
 class cboundary_malte : public cboundary
 {
   public:
@@ -40,8 +42,7 @@ class cboundary_malte : public cboundary
                     double *); ///< Set the values for the boundary fields.
 
     int calc_stats(double *, int, double *, double *);
-
-    int calc_step();
+    int calc_step(double *, double aval);
 
     // from init file
     int    patch_dim;
@@ -58,7 +59,6 @@ class cboundary_malte : public cboundary
     double patch_facl;
 
     double *noise;
-    double *step;
 
 
 };

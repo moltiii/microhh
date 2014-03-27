@@ -22,6 +22,8 @@
 //#include <string>
 #include <iostream>
 #include <fstream>
+#include <sstream>
+#include <string>
 #include <cstdlib>
 #include <cstdio>
 #include <cmath>
@@ -33,6 +35,7 @@
 #include "boundary_malte.h"
 #include "defines.h"
 #include "model.h"
+#include "master.h"
 
 using namespace std;
 
@@ -67,8 +70,6 @@ int cboundary_malte::readinifile(cinput *inputin)
   nerror += inputin->getItem(&lambda,  "boundary", "lambda" , "", 1 );
   nerror += inputin->getItem(&sigma,  "boundary", "sigma" , "", 10 );
 
- 
-
   return nerror;
 }
 
@@ -91,202 +92,657 @@ int cboundary_malte::setvalues()
 }
 
 int cboundary_malte::setbc_patch(double * restrict a, double * restrict agrad, double * restrict aflux, int sw, double aval, double visc, double offset,
-                                double * restrict tmp)
+                                double * restrict tmp1)
 {
-  int ij,jj;
-  int go, stop;
+  int ij, jj, iref, jref, igjg;
   double cosX, cosY;
-  int nyq = grid->icells/2 + 1;
-
+  int tot = grid->itot*grid->jtot;
   double sum = 0;
+  double mean_val, var_val;
+  double mean_n, var_n;
+  double mean_step, var_step;
 
-  double mean_val, std_val;
-  double mean_n, std_n;
+  noise = new double[tot];
 
-  noise = new double[grid->icells];
-  step = new double[grid->icells*grid->jcells];
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " imax: " << grid->imax << " jmax: " << grid->jmax << endl;
 
-  double mean_step, std_step;
-  calc_step();
-  calc_stats(step, grid->icells*grid->jcells, &mean_step, &std_step);
-  // printf("\nmean value step: %lf\tstd step: %lf\n",mean_step, std_step);
+  // ---------------------generate step function and cos in physical space----------------------
 
-  jj = grid->icells;
-  go = grid->jgc*grid->icells;
-  stop = (grid->jgc+1)*grid->icells-1;
+  // getting the statistics of the step function
+  calc_step(tmp1, aval);
+  calc_stats(tmp1, tot, &mean_step, &var_step);
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " mean step: " << mean_step << " var step: " << var_step << endl;
 
-  // printf("\ngo: %d\tstop: %d\n",go,stop);
-
-  // save the pattern
-  for(int j=0; j<grid->jcells; ++j)
-#pragma ivdep
-    for(int i=0; i<grid->icells; ++i)
-    {
-      ij = i + j*jj;
-      
-      cosX = -cos(2*PI*(grid->x[i]/wl))+1;
-
+  // save the cos pattern for the whole field 
+  for(int j=0; j<grid->jtot; j++)
+  {
+    for(int i=0; i<grid->itot; i++)
+    { 
+      ij = i + j*grid->itot;
       if(patch_dim == 2)
-        cosY = -cos(2*PI*(grid->y[j]/wl))+1;
+      {
+        cosX = -cos(2*PI*((grid->xsize/grid->itot)*i/wl+(grid->xsize/grid->itot/2)/wl))+1;
+        cosY = -cos(2*PI*((grid->ysize/grid->jtot)*j/wl+(grid->ysize/grid->jtot/2)/wl))+1;
+      }
       else
+      {
+        cosX = -cos(2*PI*((grid->xsize/grid->itot)*i/wl));
         cosY = 1.;
+      }
 
-      tmp[ij] = cosX*cosY;
+      noise[ij] = cosX*cosY;
     }
-    // adjust mean to step_mean
-    calc_stats(tmp, grid->icells*grid->jcells, &mean_val, &std_val);
-    for(int k=0;k<grid->icells*grid->jcells;k++)
-    {
-        tmp[k] = tmp[k] * (mean_step/mean_val);
-    }
-    calc_stats(tmp, grid->icells*grid->jcells, &mean_val, &std_val);
-    // for latest stretching of combined signal
-    double std_cos = std_val;
-    printf("\nmean flux value of uncutted cos: %lf\tstd cos: %lf\n",mean_val*aval,std_val*aval);
+  }
   
+  calc_stats(noise, tot, &mean_val, &var_val);
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " mean of original cos: " << mean_val << " variance of original cos: " << var_val << endl;
+
+  // // adjusting amplitude of cos to mean_step and shifting to zero mean
+  // for(int k=0; k<tot; k++)
+  // { 
+  //   if (patch_dim == 2)
+  //     noise[k] = (noise[k]) - mean_val;
+  //   else
+  //     noise[k] = (noise[k]) - mean_val;
+  // }
+
+  // adjusting amplitude to max B of step
+  for(int k=0; k<tot; k++)
+    noise[k] = (noise[k]) * ((4/3)*(aval-mean_step)/4);
+  calc_stats(noise, tot, &mean_val, &var_val);
+  for(int k=0; k<tot; k++)
+    noise[k] = (noise[k]) -mean_val;
+
+  calc_stats(noise, tot, &mean_val, &var_val);
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " mean of adjusted local cos: " << mean_val << " variance of adjusted local cos: " << var_val << endl;
+
+//  // write the two functions to file
+//  if (master->mpiid == 0)
+//  {
+//  ofstream nfile;
+//  nfile.open("surf_cos.txt",ios::app);
+//  for (int j=0;j<grid->jtot;j++)
+//  {
+//    for (int i=0; i<grid->itot;i++)
+//    {
+//      ij = i + j*grid->itot;
+//      nfile << noise[ij] << " ";
+//    }
+//    nfile << endl;
+//  }
+//  nfile.close();
+//  }
+  // write to file
+  if (master->mpiid == 0)
+  {
+  ofstream kfile;
+  kfile.open("step.txt",ios::app);
+  for (int j=0;j<grid->jtot;j++)
+  {
+    for (int i=0; i<grid->itot;i++)
+    {
+      ij = i + j*grid->itot;
+      kfile << tmp1[ij]*aval << " ";
+    }
+    kfile << endl;
+  }
+  kfile.close();
+  }
+  // --------------------------------------------------------------------------------------------------------
+
+
+
+  // --------------------------------------------------fft for 3D -------------------------------------------
+  if (patch_dim == 2)
+  {
+  // fft of noise
+  int nyh = grid->jtot/2 +1;
+  double sqrt2 = sqrt(2.0);
+  fftw_complex out[grid->itot * nyh];
+  fftw_plan plan_forward = fftw_plan_dft_r2c_2d ( grid->itot, grid->jtot, noise, out, FFTW_ESTIMATE );
+  fftw_plan plan_backward = fftw_plan_dft_c2r_2d ( grid->itot, grid->jtot, out, noise, FFTW_ESTIMATE );
+
+  fftw_execute ( plan_forward );
+
+  // initialize temp field and scaling coefficents with grid size
+  double abs_val;
+  fftw_complex temp[grid->itot * nyh];
+  sum = 0;
+  for (int k=0;k<nyh*grid->itot;k++)
+    { 
+      temp[k][0] = 0;
+      temp[k][1] = 0;
+      out[k][0] = out[k][0]/tot;
+      out[k][1] = out[k][1]/tot;
+    }
+
+  sum = 0;
+  for (int k=0;k<nyh*grid->itot;k++)
+  { 
+    sum += (pow(out[k][0],2) + pow(out[k][1],2));
+  }
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " sum before scaling: " << sum << endl;
+
+  // computing the sum to be cutted
+  double cut_sum = 0;
+  for (int i=0;i<grid->itot;i++)
+  {
+    for (int j=0;j<nyh;j++)
+    { 
+      ij = i*nyh + j;
+      if (j != 0 && j != nyh-1)
+        cut_sum += 2*(pow(out[ij][0],2) + pow(out[ij][1],2));
+
+      else
+        cut_sum += (pow(out[ij][0],2) + pow(out[ij][1],2));  
+    }
+  }
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " fft coefficents after scaling summed up: " << cut_sum << endl;
+
+
+  // cutting the spectrum and storing the cutted variance
+  cut_sum = (1-cut)*cut_sum*0.5;
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " cut_sum: " << cut_sum << endl;
+
+  for (int k=0;k<nyh*grid->itot;k++)
+  {
+    out[k][0] = sqrt(cut) * out[k][0];
+    out[k][1] = sqrt(cut) * out[k][1];
+  }
+
+  // dominant wavenmuber and noise wavenumber
+  int dom_wav = (int) grid->xsize/wl;
+  int n_wav = lambda * dom_wav;
+  if (master->mpiid == 0)
+    cout << "dominant wavenumber: " << dom_wav << " noise wavenumber: " << n_wav << endl;
+
+  // around which wavenumber the cutted variance should be located, sure not in wavenumber 0
+  for (int i=0;i<grid->itot;i++)
+  {
+    for (int j=0;j<nyh;j++)
+    {
+      if(j != 0)
+      {
+      ij = i*nyh + j;
+      temp[ij][0] = (1/(2*PI*pow(sigma,2))*exp(-(abs((n_wav*n_wav)-(pow(i,2) + pow(j,2)))/(2*pow(sigma,2)))));
+      }
+    }
+  }
+
+      // control
+  sum = 0;
+  for (int i=0;i<grid->itot;i++)
+  {
+    for (int j=0;j<nyh;j++)
+    { 
+      ij = i*nyh + j;
+      if (j != 0 && j != nyh-1)
+        sum += 2*(pow(out[ij][0],2) + pow(out[ij][1],2));
+
+      else
+        sum += (pow(out[ij][0],2) + pow(out[ij][1],2));  
+    }
+  }
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " sum remained in out before 2 ring: " << sum << endl;
+
+  // second ring
+   for (int i=1;i<grid->itot/2;i++)
+  {
+    for (int j=0;j<nyh;j++)
+    {
+      ij = i*nyh + j;
+      temp[(grid->itot-i)*nyh+j][0] = temp[ij][0];
+    }
+  }
+  
+
+    // write to file
+  if (master->mpiid == 0)
+  {
+    ofstream qfile;
+    qfile.open("spectrum.txt",ios::app); 
+    for (int i=0;i<grid->itot;i++)
+    {
+      for (int j=0;j<nyh;j++)
+      {
+        ij = i*nyh + j;
+        qfile << pow(temp[ij][0],2) + pow(temp[ij][1],2) << " ";
+      }
+      qfile << endl;
+    }
+    qfile.close();
+  }   
+
+  // adjusting variance of noise
+  sum = 0;
+  for (int i=0;i<grid->itot;i++)
+  {
+    for (int j=0;j<nyh;j++)
+    { 
+      ij = i*nyh + j;
+      if (j != 0 && j != nyh-1)
+        sum += 2*(pow(temp[ij][0],2) + pow(temp[ij][1],2));
+
+      else
+        sum += (pow(temp[ij][0],2) + pow(temp[ij][1],2));  
+    }
+  }
+
+  for (int k=0;k<nyh*grid->itot;k++) 
+  { 
+    temp[k][0] = temp[k][0] * sqrt(2*cut_sum/sum);
+  }
+
+  sum = 0;
+  for (int i=0;i<grid->itot;i++)
+  {
+    for (int j=0;j<nyh;j++)
+    { 
+      ij = i*nyh + j;
+      if (j != 0 && j != nyh-1)
+        sum += 2*(pow(temp[ij][0],2) + pow(temp[ij][1],2));
+
+      else
+        sum += (pow(temp[ij][0],2) + pow(temp[ij][1],2));  
+    }
+  }
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " sum before randomizing: " << sum << endl;
+
+  
+  // randomizing phases
+  srand(2);
+  double x,y1,y2;
+  for (int i=0;i<grid->itot;i++)
+  {
+    for (int j=0;j<nyh;j++)
+    { 
+      ij = i*nyh + j;
+      if ((pow(out[ij][0],2) + pow(out[ij][1],2)) < 0.00001)
+      {
+      abs_val = (pow(temp[ij][0],2) + pow(temp[ij][1],2));
+      x = (double) rand() / (double) RAND_MAX;
+      temp[ij][0] = sqrt(x*abs_val);
+      temp[ij][1] = sqrt((1-x)*abs_val);
+
+      y1 = (double) rand() / (double) RAND_MAX - 0.5;
+      temp[ij][0] = temp[ij][0] * (y1/abs(y1));
+      y2 = (double) rand() / (double) RAND_MAX - 0.5;
+      temp[ij][1] = temp[ij][1] * (y2/abs(y2));
+      }
+      else
+        if (master->mpiid == 0)
+          cout << "i: " << i << " j: " << j << " temp[ij]: " << temp[ij][0] << endl;
+    }
+  }
+
+  // control
+  sum = 0;
+  for (int i=0;i<grid->itot;i++)
+  {
+    for (int j=0;j<nyh;j++)
+    { 
+      ij = i*nyh + j;
+      if (j != 0 && j != nyh-1)
+        sum += 2*(pow(out[ij][0],2) + pow(out[ij][1],2));
+
+      else
+        sum += (pow(out[ij][0],2) + pow(out[ij][1],2));  
+    }
+  }
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " sum remained in out: " << sum << endl;
+
+
+  // adding the origianl variance of dominant wavenumber again keeping the sign
+  for (int i=0;i<grid->itot;i++)
+    {
+      for (int j=0;j<nyh;j++)
+      {
+        ij = i*nyh + j;
+        if ((pow(out[ij][0],2) + pow(out[ij][1],2)) > 0.00001)
+        {
+          out[ij][0] = sqrt(pow(out[ij][0],2) + pow(temp[ij][0],2))*(out[ij][0]/abs(out[ij][0]));
+          out[ij][1] = sqrt(pow(out[ij][1],2) + pow(temp[ij][1],2))*(out[ij][1]/abs(out[ij][1]));
+        }
+        else
+        {
+          out[ij][0] = out[ij][0] + temp[ij][0];
+          out[ij][1] = out[ij][1] + temp[ij][1];
+        }
+      }
+    }
+
+  // control
+  sum = 0;
+  for (int i=0;i<grid->itot;i++)
+  {
+    for (int j=0;j<nyh;j++)
+    { 
+      ij = i*nyh + j;
+      if (j != 0 && j != nyh-1)
+        sum += 2*(pow(out[ij][0],2) + pow(out[ij][1],2));
+
+      else
+        sum += (pow(out[ij][0],2) + pow(out[ij][1],2));  
+    }
+  }
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " sum after adding: " << sum << endl;
+  
+  // ifft
+  fftw_execute ( plan_backward );
+  }
+  // -----------------------------------------------------------------------------------------------------
+
+
+
+  // ------------------------------fft for 2D computation ------------------------------------------------
+  else
+  {
+  // fft of noise
+  double abs_val;
+  int nyq = grid->itot/2+1;
+  fftw_complex temp[nyq];
+  fftw_complex out[nyq];
+
+  fftw_plan plan_forward = fftw_plan_dft_r2c_1d ( tot, noise, out, FFTW_ESTIMATE );
+  fftw_plan plan_backward = fftw_plan_dft_c2r_1d (  tot, out, noise, FFTW_ESTIMATE );
+  fftw_execute ( plan_forward );
+  
+  sum = 0;
+  for (int k=0;k<nyq;k++)
+    { 
+      temp[k][0] = 0;
+      temp[k][1] = 0;
+      out[k][0] = out[k][0]/tot;
+      out[k][1] = out[k][1]/tot;
+    }
+
+  sum = 0;
+  for (int k=0;k<nyq;k++)
+  { 
+    sum += (pow(out[k][0],2) + pow(out[k][1],2));
+  }
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " sum before scaling: " << sum << endl; 
+ 
+   // computing the sum to be cutted
+  double cut_sum = 0;
+  for (int k=0;k<nyq;k++)
+  {
+      if (k != 0 && k != nyq-1)
+        cut_sum += 2*(pow(out[k][0],2) + pow(out[k][1],2));
+
+      else
+        cut_sum += (pow(out[k][0],2) + pow(out[k][1],2));  
+  }
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " fft coefficents after scaling summed up: " << cut_sum << endl;
+
+
+  // cutting the spectrum and storing the cutted variance
+  cut_sum = (1-cut)*cut_sum*0.5;
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " cut_sum: " << cut_sum << endl;
+
+  for (int k=0;k<nyq;k++)
+  {
+    out[k][0] = sqrt(cut) * out[k][0];
+    out[k][1] = sqrt(cut) * out[k][1];
+  }
+
+  // dominant wavenmuber and noise wavenumber
+  int dom_wav = (int) grid->xsize/wl;
+  int n_wav = lambda * dom_wav;
+  if (master->mpiid == 0)
+    cout << "dominant wavenumber: " << dom_wav << " noise wavenumber: " << n_wav << endl;
+
+
+  // around which wavenumber the cutted variance should be located, sure not in wavenumber 0
+  for (int k=0;k<nyq;k++)
+  {
+    if(k != 0)
+    {
+      temp[k][0] = (1/(sqrt(2*PI)*sigma))*exp(-(abs(pow(n_wav-k,2))/(2*pow(sigma,2))));
+    }
+  }
+
+  // control
+  sum = 0;
+  for (int k=0;k<nyq;k++)
+  {
+      if (k != 0 && k != nyq-1)
+        sum += 2*(pow(out[k][0],2) + pow(out[k][1],2));
+
+      else
+        sum += (pow(out[k][0],2) + pow(out[k][1],2));  
+  }
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " fft coefficents remaining in out: " << sum << endl;
+
+
+    // write to file
+  if (master->mpiid == 0)
+  {
+    ofstream gfile;
+    gfile.open("spectrum.txt",ios::app); 
+    for (int k=0;k<nyq;k++)
+    {
+      gfile << pow(temp[k][0],2) + pow(temp[k][1],2) << " ";
+    }
+    gfile.close();
+  }   
+
+  // adjusting variance of noise
+  sum = 0;
+  for (int k=0;k<nyq;k++)
+  {
+      if (k != 0 && k != nyq-1)
+        sum += 2*(pow(temp[k][0],2) + pow(temp[k][1],2));
+
+      else
+        sum += (pow(temp[k][0],2) + pow(temp[k][1],2));  
+  }
+
+  for (int k=0;k<nyq;k++) 
+  { 
+    temp[k][0] = temp[k][0] * sqrt(2*cut_sum/sum);
+  }
+
+   // randomizing phases
+  srand(2);
+  double x,y1,y2;
+  for (int k=0;k<nyq;k++)
+  {   
+      if ((pow(out[k][0],2) + pow(out[k][1],2)) < 0.00001)
+      {
+      abs_val = (pow(temp[k][0],2) + pow(temp[k][1],2));
+      x = (double) rand() / (double) RAND_MAX;
+      temp[k][0] = sqrt(x*abs_val);
+      temp[k][1] = sqrt((1-x)*abs_val);
+
+      y1 = (double) rand() / (double) RAND_MAX - 0.5;
+      temp[k][0] = temp[k][0] * (y1/abs(y1));
+      y2 = (double) rand() / (double) RAND_MAX - 0.5;
+      temp[k][1] = temp[k][1] * (y2/abs(y2));
+      }
+      else
+        if (master->mpiid == 0)
+          cout << "k: " << k <<" temp[k]: " << temp[k][0] << endl;
+  }
+
+  sum = 0;
+  for (int k=0;k<nyq;k++)
+  {
+      if (k != 0 && k != nyq-1)
+        sum += 2*(pow(temp[k][0],2) + pow(temp[k][1],2));
+
+      else
+        sum += (pow(temp[k][0],2) + pow(temp[k][1],2));  
+  }
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " sum after randomizing: " << sum << endl;
+
+  // adding the origianl variance of dominant wavenumber again keeping the sign
+  for (int k=0;k<nyq;k++)
+    {
+        if ((pow(out[k][0],2) + pow(out[k][1],2)) > 0.00001)
+        {
+          out[k][0] = sqrt(pow(out[k][0],2) + pow(temp[k][0],2))*(out[k][0]/abs(out[k][0]));
+          out[k][1] = sqrt(pow(out[k][1],2) + pow(temp[k][1],2))*(out[k][1]/abs(out[k][1]));
+        }
+        else
+        {
+          out[k][0] = out[k][0] + temp[k][0];
+          out[k][1] = out[k][1] + temp[k][1];
+        }
+    }
+
+ sum = 0;
+  for (int k=0;k<nyq;k++)
+  {
+      if (k != 0 && k != nyq-1)
+        sum += 2*(pow(out[k][0],2) + pow(out[k][1],2));
+
+      else
+        sum += (pow(out[k][0],2) + pow(out[k][1],2));  
+  }
+  if (master->mpiid == 0)
+    cout << "id: " << master->mpiid << " sum before ifft: " << sum << endl;
+
+  // ifft
+  fftw_execute ( plan_backward );
+  }
+  // -----------------------------------------------------------------------------------------------------
+
+
+
+  // -----------------------------------------------writing the data in array ---------------------------- 
+
+  // adding mean_step
+  for(int k=0; k<tot; k++)
+    noise[k] = (noise[k] + mean_step);
+
+   calc_stats(noise, tot, &mean_val, &var_val);
+  if (master->mpiid == 0)
+  cout << "id: " << master->mpiid << " mean after adding step mean: " << mean_val << " var: " << var_val << endl << endl;
+  
+  // // noise test
+  // int z = 1;
+  // for (int j=0; j<grid->jtot; j++)
+  // {
+  //   for (int i=0; i<grid->itot; i++)
+  //   {
+  //     ij = i + j*grid->itot;
+  //     noise[ij] = z;
+  //     z = z+1;
+  //   }
+  // }
+
+      // write to file
+  if (master->mpiid == 0)
+  {
+  ofstream mfile;
+  mfile.open("noise.txt",ios::app);
+  for (int j=0;j<grid->jtot;j++)
+  {
+    for (int i=0; i<grid->itot;i++)
+    {
+      ij = i + j*grid->itot;
+      mfile << noise[ij] << " ";
+    }
+    mfile << endl;
+  }
+  mfile.close();
+  }
+
+  // split whole noise signal in parts of different processors
+  jj = grid->icells;
+  for (int j=grid->jstart; j<grid->jend; ++j)
+  {
+    for (int i=grid->istart; i<grid->iend; ++i)
+    { 
+      iref = i - grid->igc;
+      jref = j - grid->jgc;
+      ij = i + j*jj;
+      igjg = master->mpicoordy*grid->jmax*grid->itot + jref*grid->itot + master->mpicoordx*grid->imax + iref;
+      tmp1[ij] = noise[igjg];
+      // if (master->mpiid == 0)
+      //   cout << "ij " << ij << " " << master->mpicoordx << " " << master->mpicoordy << endl;
+    }
+  }
+
   if(sw == BC_DIRICHLET)
   {
-    for(int j=0; j<grid->jcells; ++j)
+    for(int j=0; j<grid->jcells; j++)
 #pragma ivdep
-      for(int i=0; i<grid->icells; ++i)
+      for(int i=0; i<grid->icells; i++)
       {
         ij = i + j*jj;
-        a[ij] = cut*tmp[ij] - offset;
+        a[ij] = tmp1[ij] - offset;
       }
   }
   else if(sw == BC_NEUMANN)
   {
-    for(int j=0; j<grid->jcells; ++j)
+    for(int j=0; j<grid->jcells; j++)
 #pragma ivdep
-      for(int i=0; i<grid->icells; ++i)
+      for(int i=0; i<grid->icells; i++)
       {
         ij = i + j*jj;
-        agrad[ij] = cut*tmp[ij]*aval;
+        agrad[ij] = tmp1[ij];
         aflux[ij] = -agrad[ij]*visc;
       }
   }
   else if(sw == BC_FLUX)
   {
-    for(int j=0; j<grid->jcells; ++j)
+    for(int j=0; j<grid->jcells; j++)
 #pragma ivdep
-      for(int i=0; i<grid->icells; ++i)
+      for(int i=0; i<grid->icells; i++)
       {
         ij = i + j*jj;
-        aflux[ij] = cut*tmp[ij]*aval;
+        aflux[ij] = tmp1[ij];
         agrad[ij] = -aflux[ij]/visc;
       }
   }
 
-    printf("\nmean flux step: %lf\tstd flux step: %lf\n", mean_step*aval, std_step*aval);
-    
-    calc_stats(aflux, grid->icells*grid->jcells, &mean_val, &std_val);
-    printf("\nmean flux cos: %lf\tstd_val: %lf\n", mean_val,std_val);
+  grid->boundary_cyclic2d(a);
+  grid->boundary_cyclic2d(aflux);
+  grid->boundary_cyclic2d(agrad);
 
-    // generate noise
-    // int static seed = 0;
-    srand(time(NULL));
-    for(int i=0; i<grid->icells; ++i)
-      noise[i] = (double) rand() / (double) RAND_MAX;
-    
-    // stats of generated noise
-    calc_stats(noise, grid->icells, &mean_n, &std_n);
-    printf("\ngenerated mean value of noise: %lf\n",mean_n);
+  
 
-    // shifting the noise signal to zero mean value
-    for(int k=0;k<grid->icells;k++)
-        noise[k] = noise[k] - mean_n;
+  ofstream lfile;
+  std::ostringstream fileNameStream("field_p");
+  fileNameStream << "field_p" << master->mpiid << ".txt";
+  std::string fileName = fileNameStream.str();
+  lfile.open(fileName.c_str(),ios::app);
 
-    // test wether mean value of noise is zero now 
-    calc_stats(noise, grid->icells, &mean_n, &std_n);
-    printf("\nis noise mean value equal to zero? %lf\n",mean_n);
-
-    // mean value of noise depending on cut
-    mean_n = mean_step*aval - mean_val;
-    // std of noise depending on cut
-    std_n = sqrt(1/pow(cut,2)-1)*std_val;
-    printf("\nmean flux noise should be: %lf\tstd_n: %lf\n",mean_n,std_n);
-
-    // generate gaussian filter 
-    double * hg;
-    hg = new double[grid->icells]; 
-    sum = 0;
-    for(int i=0;i<nyq;i++)
+  for (int j=0;j<grid->jcells;++j)
+  {
+    for (int i=0; i<grid->icells;++i)
     {
-      hg[i] = (1/(sqrt(PI)*sigma*std_step))*exp(-(pow((lambda/wl-i),2)/(2*pow(sigma*std_step,2)))); // <-------- must be std_stepF!!!!
-      sum += hg[i];
+      ij = i + j*jj;
+      lfile << aflux[ij] << " ";
     }
-    for(int i=0;i<nyq;i++)
-      hg[i] = hg[i]/sum;
+    lfile << endl;
+  }
+  lfile.close(); 
 
-    // fft of noise
-    fftw_complex out[nyq];
-    fftw_plan plan_backward;
-    fftw_plan plan_forward;
-    plan_forward = fftw_plan_dft_r2c_1d ( grid->icells, noise, out, FFTW_ESTIMATE );
-    plan_backward = fftw_plan_dft_c2r_1d ( grid->icells, out, noise, FFTW_ESTIMATE );
-    fftw_execute ( plan_forward );
-    // printf("real part: %f\timag part: %f\n",out[nyq-1][0],out[nyq-1][1]);
-
-    // apply filter
-    for (int i=1;i<nyq;i++) // not touching the mean and the nyquist frequency
-    {
-      out[i][0] = out[i][0] * hg[i];
-      out[i][1] = out[i][1] * hg[i];
-    }
-
-    // ifft
-    fftw_execute ( plan_backward );
-
-    // shifting and stretching noise to correct mean and std
-    double mean_temp, std_temp;
-    calc_stats(noise, grid->icells, &mean_temp, &std_temp);
-    for(int i=0;i<grid->icells;i++)
-      noise[i] = noise[i]*(std_n/std_temp) + mean_n;
-
-    calc_stats(noise, grid->icells, &mean_n, &std_n);
-    printf("\nmean flux noise really is: %lf\tstd_n final: %lf\n", mean_n, std_n);
-
-    // add noise to cos
-    for(int j=0; j<grid->jcells; ++j)
-    {
-      for(int i=0; i<grid->icells; ++i)
-      {
-        ij = i + j*jj;
-        aflux[ij] = aflux[ij] + noise[i];
-      }
-    }
-
-    // final stretch of combined signal + test
-    calc_stats(aflux, grid->icells*grid->jcells, &mean_val, &std_val);
-    for(int j=0; j<grid->jcells; ++j)
-    {
-      for(int i=0; i<grid->icells; ++i)
-      {
-        ij = i + j*jj;
-        aflux[ij] = (aflux[ij]-mean_val) * (std_cos*aval/std_val) + mean_val; // <- to avoid manipulating the adjusted mean_value
-        agrad[ij] = -aflux[ij]/visc;
-      }
-    }
-    calc_stats(aflux, grid->icells*grid->jcells, &mean_val, &std_val);
-    printf("\nmean flux of combined signal: %lf\tstd_val: %lf\n\n", mean_val,std_val);
-
-     // write to file
-    ofstream ofile;
-    ofile.open("boundary_profile.txt",ios::app); 
-    for(int k=0;k<grid->icells;k++)
-    {
-        ofile << k << " " << aflux[k] << " " << step[k]*aval << endl;
-    }
-    ofile.close();
-
-    // fftw_destroy_plan ( plan_forward );
-    // fftw_destroy_plan ( plan_backward );
-    // fftw_free ( out );
 
   return 0;
 }
+// --------------------------------------------------------------------------------------------------------
 
-int cboundary_malte::calc_stats(double * a, int n, double * mean_val, double * std_val)
+int cboundary_malte::calc_stats(double * a, int n, double * mean_val, double * var_val)
 { 
   double sum = 0;
 
@@ -297,26 +753,26 @@ int cboundary_malte::calc_stats(double * a, int n, double * mean_val, double * s
 
   sum = 0;
 
-  for(int k=0;k<n;k++)
+   for(int k=0;k<n;k++)
     sum += pow((*mean_val-a[k]),2);
-  *std_val = sqrt(sum/n);
+  *var_val = sum/(n);
   
   return 0;
 }
 
-int cboundary_malte::calc_step()
+
+int cboundary_malte::calc_step(double * step, double aval)
 {
   double xmod, ymod;
   double errvalx, errvaly;
   int ij;
-
-  for(int j=0; j<grid->jcells; ++j)
+  for(int j=0; j<grid->jtot; j++)
   {
-    for(int i=0; i<grid->icells; ++i)
+    for(int i=0; i<grid->itot; i++)
     {
-      ij = i + j*(grid->icells);
-      xmod = fmod(grid->x[i], patch_xh);
-      ymod = fmod(grid->y[j], patch_xh);
+      ij = i + j*(grid->itot);
+      xmod = fmod((grid->xsize/grid->itot)*i, patch_xh);
+      ymod = fmod((grid->ysize/grid->jtot)*j, patch_xh);
 
       errvalx = 0.5 - 0.5*erf(2.*(std::abs(2.*xmod - patch_xh) - patch_xr) / patch_xi);
 
@@ -325,7 +781,7 @@ int cboundary_malte::calc_step()
       else
         errvaly = 1.;
 
-      step[ij] = errvalx*errvaly;
+      step[ij] = errvalx*errvaly*aval;
 
     }
   }

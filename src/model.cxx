@@ -59,6 +59,7 @@
 // thermo schemes
 #include "thermo.h"
 #include "thermo_dry.h"
+#include "thermo_dry_slope.h"
 #include "thermo_moist.h"
 
 // stats schemes
