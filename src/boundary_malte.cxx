@@ -110,7 +110,7 @@ int cboundary_malte::setbc_patch(double * restrict a, double * restrict agrad, d
   // ---------------------generate step function and cos in physical space----------------------
 
   // getting the statistics of the step function
-  calc_step(tmp1, aval);
+  calc_step(tmp1);
   calc_stats(tmp1, tot, &mean_step, &var_step);
   if (master->mpiid == 0)
     cout << "id: " << master->mpiid << " mean step: " << mean_step << " var step: " << var_step << endl;
@@ -140,42 +140,35 @@ int cboundary_malte::setbc_patch(double * restrict a, double * restrict agrad, d
   if (master->mpiid == 0)
     cout << "id: " << master->mpiid << " mean of original cos: " << mean_val << " variance of original cos: " << var_val << endl;
 
-  // // adjusting amplitude of cos to mean_step and shifting to zero mean
-  // for(int k=0; k<tot; k++)
-  // { 
-  //   if (patch_dim == 2)
-  //     noise[k] = (noise[k]) - mean_val;
-  //   else
-  //     noise[k] = (noise[k]) - mean_val;
-  // }
-
-  // adjusting amplitude to max B of step
+  // adjusting amplitude of cos to mean_step and shifting to zero mean
   for(int k=0; k<tot; k++)
-    noise[k] = (noise[k]) * ((4/3)*(aval-mean_step)/4);
-  calc_stats(noise, tot, &mean_val, &var_val);
-  for(int k=0; k<tot; k++)
-    noise[k] = (noise[k]) -mean_val;
+  { 
+    if (patch_dim == 2)
+      noise[k] = (noise[k]) * mean_step - mean_step;
+    else
+      noise[k] = (noise[k]) * mean_step;
+  }
 
   calc_stats(noise, tot, &mean_val, &var_val);
   if (master->mpiid == 0)
     cout << "id: " << master->mpiid << " mean of adjusted local cos: " << mean_val << " variance of adjusted local cos: " << var_val << endl;
 
-//  // write the two functions to file
-//  if (master->mpiid == 0)
-//  {
-//  ofstream nfile;
-//  nfile.open("surf_cos.txt",ios::app);
-//  for (int j=0;j<grid->jtot;j++)
-//  {
-//    for (int i=0; i<grid->itot;i++)
-//    {
-//      ij = i + j*grid->itot;
-//      nfile << noise[ij] << " ";
-//    }
-//    nfile << endl;
-//  }
-//  nfile.close();
-//  }
+  // write the two functions to file
+  if (master->mpiid == 0)
+  {
+  ofstream nfile;
+  nfile.open("surf_cos.txt",ios::app);
+  for (int j=0;j<grid->jtot;j++)
+  {
+    for (int i=0; i<grid->itot;i++)
+    {
+      ij = i + j*grid->itot;
+      nfile << noise[ij] << " ";
+    }
+    nfile << endl;
+  }
+  nfile.close();
+  }
   // write to file
   if (master->mpiid == 0)
   {
@@ -630,9 +623,9 @@ int cboundary_malte::setbc_patch(double * restrict a, double * restrict agrad, d
 
   // adding mean_step
   for(int k=0; k<tot; k++)
-    noise[k] = (noise[k] + mean_step);
+    noise[k] = noise[k] + mean_step;
 
-   calc_stats(noise, tot, &mean_val, &var_val);
+  calc_stats(noise, tot, &mean_val, &var_val);
   if (master->mpiid == 0)
   cout << "id: " << master->mpiid << " mean after adding step mean: " << mean_val << " var: " << var_val << endl << endl;
   
@@ -658,7 +651,7 @@ int cboundary_malte::setbc_patch(double * restrict a, double * restrict agrad, d
     for (int i=0; i<grid->itot;i++)
     {
       ij = i + j*grid->itot;
-      mfile << noise[ij] << " ";
+      mfile << noise[ij]*aval << " ";
     }
     mfile << endl;
   }
@@ -698,7 +691,7 @@ int cboundary_malte::setbc_patch(double * restrict a, double * restrict agrad, d
       for(int i=0; i<grid->icells; i++)
       {
         ij = i + j*jj;
-        agrad[ij] = tmp1[ij];
+        agrad[ij] = tmp1[ij]*aval;
         aflux[ij] = -agrad[ij]*visc;
       }
   }
@@ -709,7 +702,7 @@ int cboundary_malte::setbc_patch(double * restrict a, double * restrict agrad, d
       for(int i=0; i<grid->icells; i++)
       {
         ij = i + j*jj;
-        aflux[ij] = tmp1[ij];
+        aflux[ij] = tmp1[ij]*aval;
         agrad[ij] = -aflux[ij]/visc;
       }
   }
@@ -761,7 +754,7 @@ int cboundary_malte::calc_stats(double * a, int n, double * mean_val, double * v
 }
 
 
-int cboundary_malte::calc_step(double * step, double aval)
+int cboundary_malte::calc_step(double * step)
 {
   double xmod, ymod;
   double errvalx, errvaly;
@@ -781,7 +774,7 @@ int cboundary_malte::calc_step(double * step, double aval)
       else
         errvaly = 1.;
 
-      step[ij] = errvalx*errvaly*aval;
+      step[ij] = errvalx*errvaly;
 
     }
   }

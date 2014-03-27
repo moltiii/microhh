@@ -42,7 +42,7 @@ class cboundary_malte : public cboundary
                     double *); ///< Set the values for the boundary fields.
 
     int calc_stats(double *, int, double *, double *);
-    int calc_step(double *, double aval);
+    int calc_step(double *);
 
     // from init file
     int    patch_dim;
